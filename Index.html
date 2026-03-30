@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>👷 Volvismo RPG - Estilo 3D</title>
+<style>
+    body { margin:0; background:#111; font-family:Arial; color:white; overflow:hidden; }
+    canvas { display:block; margin:0 auto; }
+    #hud { position:absolute; top:10px; left:10px; pointer-events:none; }
+    #combat { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); display:none; flex-direction:column; justify-content:center; align-items:center; }
+    button { margin:10px; padding:15px 30px; font-size:18px; background:#0a0; color:white; border:none; border-radius:8px; cursor:pointer; }
+    .title { font-size:32px; margin-bottom:20px; }
+</style>
+</head>
+<body>
+
+<canvas id="canvas" width="800" height="600"></canvas>
+
+<div id="hud">
+    <h1 style="margin:0; color:#0f0;">👷 VOLVISMO RPG 3D</h1>
+    <p id="desc" style="margin:5px 0; font-size:18px;">Carregando fábrica...</p>
+    <p>HP: <span id="hp" style="color:#0f0;">100</span></p>
+</div>
+
+<div id="combat">
+    <div class="title">⚔️ COMBATE - Volvismo Quiz</div>
+    <p id="question" style="font-size:22px; max-width:600px; text-align:center;"></p>
+    <div id="options"></div>
+    <p id="result" style="margin-top:20px; font-size:20px; min-height:30px;"></p>
+    <p style="margin-top:30px; font-size:16px;">Pressione A, B, C ou D no teclado</p>
+</div>
+
+<script>
+// =============== CONFIGURAÇÕES ===============
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const LARGURA = 800, ALTURA = 600;
+
+let posX = 3.5, posY = 4.5;
+let dirX = 0, dirY = -1;
+let planeX = 0.66, planeY = 0;
+
+let hp = 100;
+
+const mapa = [
+    [1,1,1,1,1,1,1],
+    [1,0,0,0,1,0,1],
+    [1,0,0,0,0,0,1],
+    [1,1,0,0,1,0,1],
+    [1,0,0,0,0,0,1],
+    [1,0,0,0,1,1,1],
+    [1,1,1,1,1,1,1]
+];
+
+const inimigos = {
+    "2,1": {nome:"Espírito Fordista", hp:50, tipo:"fordismo", cor:"#ff0000"},
+    "5,1": {nome:"Chefe Taylorista", hp:60, tipo:"taylorismo", cor:"#00ff00"},
+    "2,3": {nome:"Robô Desqualificado", hp:40, tipo:"maquina", cor:"#0000ff"},
+    "1,5": {nome:"Gerente Antigo", hp:55, tipo:"fordismo", cor:"#ffff00"}
+};
+
+const perguntas = {
+    fordismo: [
+        {q:"Qual empresa criou o Volvismo?", op:["A) Ford","B) Volvo","C) Toyota","D) GM"], r:"B"},
+        {q:"O Volvismo valoriza a autonomia do trabalhador?", op:["A) Sim","B) Não"], r:"A"}
+    ],
+    taylorismo: [
+        {q:"O Volvismo é pós-fordista?", op:["A) Sim","B) Não"], r:"A"},
+        {q:"No Volvismo os trabalhadores trabalham em:", op:["A) Linha única","B) Equipes autônomas"], r:"B"}
+    ],
+    maquina: [
+        {q:"O Volvismo mistura automação com:", op:["A) Trabalho manual qualificado","B) Trabalho repetitivo"], r:"A"}
+    ]
+};
+
+let estado = "explore";
+let inimigoAtual = null;
+let perguntaAtual = null;
+let respostaCerta = null;
+
+// =============== RAYCASTING 3D ===============
+function desenhar3D() {
+    ctx.fillStyle = "#282850"; ctx.fillRect(0, 0, LARGURA, ALTURA/2);           // céu
+    ctx.fillStyle = "#5a5a28"; ctx.fillRect(0, ALTURA/2, LARGURA, ALTURA/2);   // chão
+
+    const zBuffer = new Array(LARGURA).fill(Infinity);
+
+    for (let x = 0; x < LARGURA; x++) {
+        const cameraX = 2 * x / LARGURA - 1;
+        let rayDirX = dirX + planeX * cameraX;
+        let rayDirY = dirY + planeY * cameraX;
+
+        let mapX = Math.floor(posX);
+        let mapY = Math.floor(posY);
+
+        const deltaDistX = Math.abs(1 / rayDirX);
+        const deltaDistY = Math.abs(1 / rayDirY);
+
+        let stepX, stepY, sideDistX, sideDistY;
+
+        if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX) * deltaDistX; }
+        else { stepX = 1; sideDistX = (mapX + 1 - posX) * deltaDistX; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY) * deltaDistY; }
+        else { stepY = 1; sideDistY = (mapY + 1 - posY) * deltaDistY; }
+
+        let hit = false, side = 0;
+        while (!hit) {
+            if (sideDistX < sideDistY) {
+                sideDistX += deltaDistX;
+                mapX += stepX;
+                side = 0;
+            } else {
+                sideDistY += deltaDistY;
+                mapY += stepY;
+                side = 1;
+            }
+            if (mapa[mapY] && mapa[mapY][mapX] === 1) hit = true;
+        }
+
+        let perpWallDist = side === 0 
+            ? (mapX - posX + (1 - stepX)/2) / rayDirX 
+            : (mapY - posY + (1 - stepY)/2) / rayDirY;
+
+        const lineHeight = Math.floor(ALTURA / perpWallDist);
+        let drawStart = Math.max(0, -lineHeight/2 + ALTURA/2);
+        let drawEnd = Math.min(ALTURA, lineHeight/2 + ALTURA/2);
+
+        const cor = side === 0 ? "#aaaaaa" : "#777777";
+        ctx.fillStyle = cor;
+        ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+
+        zBuffer[x] = perpWallDist;
+    }
+
+    // Desenhar inimigos (sprites)
+    let spriteList = [];
+    for (let key in inimigos) {
+        if (inimigos[key].hp <= 0) continue;
+        const [ex, ey] = key.split(',').map(Number);
+        const spriteX = ex + 0.5 - posX;
+        const spriteY = ey + 0.5 - posY;
+
+        const invDet = 1 / (planeX * dirY - dirX * planeY);
+        const transformX = invDet * (dirY * spriteX - dirX * spriteY);
+        const transformY = invDet * (-planeY * spriteX + planeX * spriteY);
+
+        if (transformY > 0) {
+            const spriteScreenX = Math.floor((LARGURA / 2) * (1 + transformX / transformY));
+            const spriteHeight = Math.floor(ALTURA / transformY * 1.8);
+            const spriteWidth = Math.floor(spriteHeight * 0.6);
+
+            spriteList.push({
+                dist: transformY,
+                x: spriteScreenX,
+                w: spriteWidth,
+                h: spriteHeight,
+                cor: inimigos[key].cor
+            });
+        }
+    }
+
+    spriteList.sort((a,b) => b.dist - a.dist);
+
+    spriteList.forEach(s => {
+        const startX = Math.max(0, s.x - s.w/2);
+        const endX = Math.min(LARGURA, s.x + s.w/2);
+        const startY = Math.max(0, -s.h/2 + ALTURA/2);
+        const endY = Math.min(ALTURA, s.h/2 + ALTURA/2);
+
+        ctx.fillStyle = s.cor;
+        for (let stripe = startX; stripe < endX; stripe++) {
+            if (s.dist < zBuffer[stripe]) {
+                ctx.fillRect(stripe, startY, 1, endY - startY);
+            }
+        }
+    });
+}
+
+// =============== COMBATE ===============
+function iniciarCombate(key) {
+    inimigoAtual = key;
+    estado = "combat";
+    const tipo = inimigos[key].tipo;
+    perguntaAtual = perguntas[tipo][Math.floor(Math.random() * perguntas[tipo].length)];
+    respostaCerta = perguntaAtual.r;
+
+    document.getElementById('combat').style.display = 'flex';
+    document.getElementById('question').textContent = perguntaAtual.q;
+    const optsDiv = document.getElementById('options');
+    optsDiv.innerHTML = '';
+    perguntaAtual.op.forEach(op => {
+        const btn = document.createElement('button');
+        btn.textContent = op;
+        btn.onclick = () => responder(op[0]);
+        optsDiv.appendChild(btn);
+    });
+    document.getElementById('result').textContent = '';
+}
+
+function responder(resp) {
+    const resultEl = document.getElementById('result');
+    if (resp === respostaCerta) {
+        const dano = Math.floor(Math.random() * 11) + 15;
+        inimigos[inimigoAtual].hp -= dano;
+        resultEl.style.color = '#0f0';
+        resultEl.textContent = `✅ CORRETA! Dano ${dano}`;
+    } else {
+        const dano = Math.floor(Math.random() * 11) + 10;
+        hp -= dano;
+        resultEl.style.color = '#f00';
+        resultEl.textContent = `❌ ERRADA! Você tomou ${dano} de dano`;
+    }
+
+    setTimeout(() => {
+        if (inimigos[inimigoAtual].hp <= 0) {
+            delete inimigos[inimigoAtual];
+            document.getElementById('combat').style.display = 'none';
+            estado = "explore";
+            if (Object.keys(inimigos).length === 0) alert("🏆 VITÓRIA! A fábrica agora é 100% Volvismo!");
+        } else if (hp <= 0) {
+            alert("💀 GAME OVER - O Fordismo venceu...");
+            location.reload();
+        } else {
+            // próxima pergunta
+            const tipo = inimigos[inimigoAtual].tipo;
+            perguntaAtual = perguntas[tipo][Math.floor(Math.random() * perguntas[tipo].length)];
+            respostaCerta = perguntaAtual.r;
+            document.getElementById('question').textContent = perguntaAtual.q;
+            const optsDiv = document.getElementById('options');
+            optsDiv.innerHTML = '';
+            perguntaAtual.op.forEach(op => {
+                const btn = document.createElement('button');
+                btn.textContent = op;
+                btn.onclick = () => responder(op[0]);
+                optsDiv.appendChild(btn);
+            });
+            resultEl.textContent = '';
+        }
+    }, 1200);
+}
+
+// =============== LOOP PRINCIPAL ===============
+function loop() {
+    desenhar3D();
+
+    // HUD
+    document.getElementById('hp').textContent = Math.max(0, hp);
+    document.getElementById('desc').textContent = "Eu estou na fábrica Volvo. O Volvismo está em suas mãos!";
+
+    // Vitória
+    if (Object.keys(inimigos).length === 0) {
+        ctx.fillStyle = "rgba(0,255,0,0.7)";
+        ctx.font = "bold 40px Arial";
+        ctx.fillText("🏆 VITÓRIA TOTAL!", 150, 300);
+    }
+
+    requestAnimationFrame(loop);
+}
+
+// =============== CONTROLES ===============
+document.addEventListener('keydown', e => {
+    if (estado === "combat") {
+        let resp = '';
+        if (e.key === 'a' || e.key === 'A') resp = 'A';
+        if (e.key === 'b' || e.key === 'B') resp = 'B';
+        if (e.key === 'c' || e.key === 'C') resp = 'C';
+        if (e.key === 'd' || e.key === 'D') resp = 'D';
+        if (resp) responder(resp);
+        return;
+    }
+
+    const speed = 0.08;
+    const rot = 0.05;
+
+    if (e.key === 'w' || e.key === 'W') { // frente
+        if (mapa[Math.floor(posY)][Math.floor(posX + dirX * speed)] === 0) posX += dirX * speed;
+        if (mapa[Math.floor(posY + dirY * speed)][Math.floor(posX)] === 0) posY += dirY * speed;
+    }
+    if (e.key === 's' || e.key === 'S') { // trás
+        if (mapa[Math.floor(posY)][Math.floor(posX - dirX * speed)] === 0) posX -= dirX * speed;
+        if (mapa[Math.floor(posY - dirY * speed)][Math.floor(posX)] === 0) posY -= dirY * speed;
+    }
+    if (e.key === 'a' || e.key === 'A') { // strafe esquerda
+        if (mapa[Math.floor(posY)][Math.floor(posX - dirY * speed)] === 0) posX -= dirY * speed;
+        if (mapa[Math.floor(posY + dirX * speed)][Math.floor(posX)] === 0) posY += dirX * speed;
+    }
+    if (e.key === 'd' || e.key === 'D') { // strafe direita
+        if (mapa[Math.floor(posY)][Math.floor(posX + dirY * speed)] === 0) posX += dirY * speed;
+        if (mapa[Math.floor(posY - dirX * speed)][Math.floor(posX)] === 0) posY -= dirX * speed;
+    }
+    if (e.key === 'ArrowLeft') { // girar esquerda
+        const oldDirX = dirX;
+        dirX = dirX * Math.cos(rot) - dirY * Math.sin(rot);
+        dirY = oldDirX * Math.sin(rot) + dirY * Math.cos(rot);
+        const oldPlaneX = planeX;
+        planeX = planeX * Math.cos(rot) - planeY * Math.sin(rot);
+        planeY = oldPlaneX * Math.sin(rot) + planeY * Math.cos(rot);
+    }
+    if (e.key === 'ArrowRight') { // girar direita
+        const oldDirX = dirX;
+        dirX = dirX * Math.cos(-rot) - dirY * Math.sin(-rot);
+        dirY = oldDirX * Math.sin(-rot) + dirY * Math.cos(-rot);
+        const oldPlaneX = planeX;
+        planeX = planeX * Math.cos(-rot) - planeY * Math.sin(-rot);
+        planeY = oldPlaneX * Math.sin(-rot) + planeY * Math.cos(-rot);
+    }
+    if (e.key === ' ') { // atacar
+        for (let key in inimigos) {
+            if (inimigos[key].hp <= 0) continue;
+            const [ex, ey] = key.split(',').map(Number);
+            const dist = Math.hypot(ex + 0.5 - posX, ey + 0.5 - posY);
+            if (dist < 1.8) {
+                iniciarCombate(key);
+                break;
+            }
+        }
+    }
+});
+
+loop();
+</script>
+
+<p style="position:absolute; bottom:10px; left:10px; font-size:14px; opacity:0.7;">
+    WASD = andar • ← → = girar • SPACE = atacar inimigo próximo
+</p>
+
+</body>
+    </html>
